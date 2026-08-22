@@ -23,8 +23,9 @@ Prompt Helper 是一个 Chrome 扩展（Manifest V3），用于在 Gemini 网页
 
 ### 2.3 注入与光标
 - 定位 Gemini 输入区（`aria-label` 优先，`.ql-editor[contenteditable="true"]` 回退）。
-- 注入后触发 `input` + `keyup`，确保 Gemini 感知内容变化。
-- 支持默认占位符、旧占位符、自定义占位符及回退匹配。
+- 注入后触发 `input` + `keyup`，确保 Gemini 感知内容变化；不自动发送。
+- 占位符优先级：当前自定义光标 → `【光标】`/`[光标]` → 第一处 `【…】`（可关） → 历史兼容占位符。未实际出现的自定义光标不会阻断后续规则。
+- 光标标记被移除后折叠光标；通用 `【主题】` 留在正文中并以选区覆盖整段。
 - 光标定位基于 DOM 遍历与偏移计算，支持多段落场景。
 
 ### 2.4 UI/可用性
@@ -32,6 +33,13 @@ Prompt Helper 是一个 Chrome 扩展（Manifest V3），用于在 Gemini 网页
 - 删除态视觉已弱化（可识别但不刺眼）。
 - 支持 `prefers-reduced-motion`（减少动画）。
 - 弹窗与确认框支持 `Esc` 关闭、Tab 焦点循环、关闭后焦点返回。
+- 触屏 / 粗指针下卡片编辑和删除始终可见。
+
+### 2.5 插入设置、状态与跨标签
+- 面板标题栏 **插入设置** 控制 `ph_auto_select_bracket_placeholder`（缺省为开）。
+- 找不到 Gemini 输入框、保存/设置失败时，在浮动按钮旁显示可见状态。
+- `chrome.storage.onChanged` 同步列表、历史和自动选中开关；写入进行中会推迟外部同步。
+- 粗指针下卡片编辑/删除始终可见，激活它们不会插入提示词。
 
 ---
 
@@ -49,7 +57,9 @@ Prompt Helper 是一个 Chrome 扩展（Manifest V3），用于在 Gemini 网页
    - `ph_prompts`
    - `ph_placeholder_history`
    - `ph_button_pos`
+   - `ph_auto_select_bracket_placeholder`（可新增；缺省视为开启）
 4. 注入后必须触发 `input` 与 `keyup`。
+5. 占位符匹配必须走 `prompt-engine.js` 的 shipped `prepareInsertion`，插入必须走 `gemini-editor.js` 的 `insertPreparedText`。
 
 ---
 
@@ -70,7 +80,8 @@ Prompt Helper 是一个 Chrome 扩展（Manifest V3），用于在 Gemini 网页
 {
   "ph_prompts": [],
   "ph_placeholder_history": ["{{cursor}}", "[[HERE]]"],
-  "ph_button_pos": { "left": 100, "top": 500 }
+  "ph_button_pos": { "left": 100, "top": 500 },
+  "ph_auto_select_bracket_placeholder": true
 }
 ```
 
@@ -79,9 +90,14 @@ Prompt Helper 是一个 Chrome 扩展（Manifest V3），用于在 Gemini 网页
 ## 5. 目录说明
 ```text
 prompt-helper/
-├── manifest.json        # 扩展清单
-├── content.js           # 核心逻辑（存储/面板/弹窗/注入/光标）
-├── content.css          # 视觉系统与组件样式（含 dark/reduced-motion）
+├── manifest.json        # 扩展清单（仅 Gemini）
+├── constants.js
+├── prompt-engine.js     # prepareInsertion / updatePlaceholderHistory
+├── storage.js           # 持久化与 onChanged
+├── gemini-editor.js     # 重建输入框、选区、input/keyup
+├── content.js           # 面板/弹窗/插入设置/状态
+├── content.css          # 视觉系统与组件样式（含 dark/reduced-motion/coarse pointer）
+├── tests/               # node:test，直接 require shipped 模块
 ├── TEST_CHECKLIST.md    # 回归验收清单
 └── icons/               # 扩展图标
 ```
@@ -89,9 +105,12 @@ prompt-helper/
 ---
 
 ## 6. 回归验收（每次改动后）
-请按 `TEST_CHECKLIST.md` 执行，重点看：
+请按 `TEST_CHECKLIST.md` 执行，并先在 `prompt-helper/` 跑 `node --test`。重点看：
 - CRUD 是否正常；
-- 占位符与光标定位是否正确；
+- 占位符优先级、`【…】` 选区与插入设置是否正确；
+- 找不到编辑器/保存失败是否在浮钮旁可见；
+- 跨标签同步是否无需刷新；
+- 触屏下编辑/删除可见且不误插入；
 - 拖拽位置持久化是否正常；
 - 深色模式与减少动画是否生效；
 - 键盘可访问性是否无回归。

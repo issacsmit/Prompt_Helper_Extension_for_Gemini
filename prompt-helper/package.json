@@ -1,0 +1,9 @@
+{
+  "name": "prompt-helper",
+  "version": "1.0.1",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test"
+  }
+}

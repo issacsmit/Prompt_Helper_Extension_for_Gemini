@@ -120,6 +120,100 @@
   font-weight: 650;
   color: var(--ph-text);
   background: var(--ph-bg);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ph-panel-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ph-settings-btn {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--ph-border-strong);
+  border-radius: 6px;
+  background: var(--ph-bg-soft);
+  color: var(--ph-text);
+  font: 600 12px/1 var(--ph-font-sans);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color var(--ph-fast) var(--ph-ease), border-color var(--ph-fast) var(--ph-ease);
+}
+
+.ph-settings-btn:hover {
+  background: var(--ph-primary-soft);
+  border-color: #93c5fd;
+}
+
+.ph-status {
+  position: fixed;
+  z-index: 2147483651;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 8px 12px;
+  border: 1px solid var(--ph-border-strong);
+  border-radius: var(--ph-radius-sm);
+  background: var(--ph-bg);
+  color: var(--ph-text);
+  box-shadow: var(--ph-shadow-md);
+  font: 600 12px/1.4 var(--ph-font-sans);
+  pointer-events: none;
+}
+
+.ph-status[hidden] {
+  display: none !important;
+}
+
+.ph-status[data-ph-kind="error"] {
+  border-color: #f7d6d6;
+  color: #b42318;
+  background: #fff7f7;
+}
+
+.ph-switch-setting {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.ph-setting-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ph-setting-title {
+  color: var(--ph-text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.ph-setting-description {
+  color: var(--ph-text-soft);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ph-switch-input {
+  margin-top: 4px;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.ph-setting-note {
+  margin: 12px 0 0;
+  color: var(--ph-text-soft);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .ph-panel-list {
@@ -239,6 +333,25 @@
 .ph-entry:focus-within .ph-entry-actions {
   opacity: 1;
   transform: translateX(0);
+}
+
+@media (hover: none), (pointer: coarse) {
+  .ph-entry-actions {
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+  }
+
+  .ph-action-btn,
+  .ph-settings-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .ph-add-btn,
+  .ph-btn {
+    min-height: 44px;
+  }
 }
 
 .ph-action-btn {
@@ -549,6 +662,28 @@
     background: var(--ph-bg);
   }
 
+  .ph-settings-btn {
+    background: #1d2636;
+    border-color: #304056;
+    color: #d1d5db;
+  }
+
+  .ph-settings-btn:hover {
+    background: #263247;
+    border-color: #3b4f73;
+  }
+
+  .ph-status {
+    background: var(--ph-bg);
+    color: var(--ph-text);
+  }
+
+  .ph-status[data-ph-kind="error"] {
+    background: #321a1a;
+    border-color: #5b2a2a;
+    color: #fca5a5;
+  }
+
   .ph-add-btn {
     border-color: #2e4f88;
     background: #1d2b48;
@@ -661,6 +796,8 @@
   .ph-entry,
   .ph-entry-actions,
   .ph-action-btn,
+  .ph-settings-btn,
+  .ph-status,
   .ph-modal-overlay,
   .ph-confirm-overlay,
   .ph-modal-box,

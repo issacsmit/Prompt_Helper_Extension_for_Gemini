@@ -5,19 +5,20 @@
   const BTN_ID = "ph-prompt-helper-btn";
   const MODAL_ID = "ph-modal-overlay";
   const CONFIRM_ID = "ph-confirm-overlay";
+  const SETTINGS_ID = "ph-settings-overlay";
+  const STATUS_ID = "ph-status";
 
-  const DEFAULT_PLACEHOLDER = "【光标】";
-  const LEGACY_PLACEHOLDER = "[光标]";
-  const MAX_PLACEHOLDER_HISTORY = 5;
+  const helper = globalThis.PromptHelper || {};
+  const DEFAULT_PLACEHOLDER = helper.DEFAULT_PLACEHOLDER || "【光标】";
   const DEBUG = false;
   const TRANSITION_MS_FALLBACK = 180;
-  const STORAGE_TIMEOUT_MS = 3000;
 
   const UI_TEXT = {
     toolName: "提示词工具",
     floatingButton: "✦",
     addPrompt: "添加提示词",
     editPrompt: "编辑提示词",
+    insertSettings: "插入设置",
     save: "保存",
     add: "添加",
     cancel: "取消",
@@ -30,42 +31,53 @@
     promptPlaceholder: "输入提示词内容，可包含占位符",
     placeholder: "占位符",
     placeholderTagTitle: "点击填充，右键删除",
-    hint: "在需要定位光标的位置输入占位符（如 {0}），注入后会自动移除并将光标定位到该位置。",
+    hint: "在需要定位光标的位置输入占位符（如 {0}），注入后会自动移除并将光标定位到该位置。正文中的第一处【…】默认会被选中，可在插入设置中关闭。",
+    autoSelectLabel: "自动选中第一处【…】",
+    autoSelectHint: "插入后可直接输入内容，替换整段全角中括号占位符。关闭后不影响【光标】、[光标] 和自定义光标。",
+    priorityNote: "优先级：当前自定义光标 → 【光标】/[光标] → 第一处【…】 → 历史兼容占位符。只有实际命中的规则才会生效。",
     deleteConfirm: "确定要删除 “{0}” 吗？",
     noEditor: "未找到 Gemini 输入框",
+    saveFailed: "保存失败，请重试。",
+    settingsSaveFailed: "插入设置保存失败，请重试。",
+    settingsUnavailable: "插入设置暂时无法保存。",
+    loadFailed: "提示词加载失败，已使用安全空列表。",
+    deleteFailed: "删除失败，请重试。",
+    historyDeleteFailed: "删除历史失败，请重试。",
+    positionSaveFailed: "按钮位置保存失败，当前位置会保留到本页关闭。",
+    syncUnavailable: "跨标签页同步暂不可用。",
   };
 
   let promptsData = [];
   let placeholderHistory = [];
+  let autoSelectBracketPlaceholder = true;
   let lastEditorCursorOffset = 0;
   let activeContextMenu = null;
   let lastActiveTrigger = null;
   let currentModalOverlay = null;
   let currentConfirmOverlay = null;
+  let currentSettingsOverlay = null;
   const overlayRemovalTimers = new WeakMap();
+  let pendingWrites = 0;
+  let pendingExternalSync = false;
+  let storageUnsubscribe = null;
+  let statusHideTimer = null;
+
+  const storage = typeof helper.Storage === "function"
+    ? new helper.Storage(typeof chrome !== "undefined" ? chrome : undefined)
+    : null;
 
   function log(...args) {
     if (DEBUG) console.log("[Prompt Helper]", ...args);
-  }
-
-  function warn(...args) {
-    if (DEBUG) console.warn("[Prompt Helper]", ...args);
   }
 
   function t(template, value) {
     return template.replace("{0}", value);
   }
 
-  function canUseChromeStorage() {
-    try {
-      return typeof chrome !== "undefined" && !!chrome.storage && !!chrome.storage.local && !!chrome.runtime && !!chrome.runtime.id;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  function isContextInvalidatedError(error) {
-    return !!(error && typeof error.message === "string" && error.message.includes("Extension context invalidated"));
+  function isIgnorableStorageError(error) {
+    if (!error) return false;
+    if (error.code === "EXTENSION_CONTEXT_INVALID") return true;
+    return !!(error.message && /context invalidated/i.test(error.message));
   }
 
   function getFocusableElements(container) {
@@ -112,6 +124,7 @@
   function clearOverlayRef(overlay) {
     if (currentModalOverlay === overlay) currentModalOverlay = null;
     if (currentConfirmOverlay === overlay) currentConfirmOverlay = null;
+    if (currentSettingsOverlay === overlay) currentSettingsOverlay = null;
   }
 
   function restoreTriggerFocus(trigger) {
@@ -146,182 +159,142 @@
     overlayRemovalTimers.set(overlay, timerId);
   }
 
-  // Module: Core utils
   function generateId() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   }
 
-  // Module: Storage
-  function loadData() {
-    return new Promise((resolve) => {
-      if (canUseChromeStorage()) {
-        chrome.storage.local.get(["ph_prompts", "ph_placeholder_history", "ph_button_pos"], (result) => {
-          const runtimeError = chrome.runtime && chrome.runtime.lastError;
-          if (runtimeError) {
-            console.error("[Prompt Helper] load failed:", runtimeError.message);
-            resolve({ prompts: [], history: [], buttonPos: null });
-            return;
-          }
-          promptsData = Array.isArray(result.ph_prompts) ? result.ph_prompts : [];
-          placeholderHistory = Array.isArray(result.ph_placeholder_history) ? result.ph_placeholder_history : [];
-          resolve({ prompts: promptsData, history: placeholderHistory, buttonPos: result.ph_button_pos || null });
-        });
-      } else {
-        promptsData = [];
-        placeholderHistory = [];
-        resolve({ prompts: [], history: [], buttonPos: null });
-      }
-    });
+  function applyState(state) {
+    promptsData = Array.isArray(state.prompts) ? state.prompts.map((record) => ({ ...record })) : [];
+    placeholderHistory = Array.isArray(state.placeholderHistory) ? [...state.placeholderHistory] : [];
+    autoSelectBracketPlaceholder = state.autoSelectBracketPlaceholder !== false;
   }
 
-  function saveData() {
-    return new Promise((resolve, reject) => {
-      if (canUseChromeStorage()) {
-        let settled = false;
-        const timeoutId = window.setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          reject(new Error("chrome.storage.local.set timed out"));
-        }, STORAGE_TIMEOUT_MS);
-
-        try {
-          chrome.storage.local.set(
-            { ph_prompts: promptsData, ph_placeholder_history: placeholderHistory },
-            () => {
-              if (settled) return;
-              settled = true;
-              window.clearTimeout(timeoutId);
-
-              const runtimeError = chrome.runtime && chrome.runtime.lastError;
-              if (runtimeError) {
-                if (isContextInvalidatedError(runtimeError)) {
-                  resolve();
-                  return;
-                }
-                reject(new Error(runtimeError.message));
-                return;
-              }
-
-              resolve();
-            }
-          );
-        } catch (error) {
-          if (settled) return;
-          settled = true;
-          window.clearTimeout(timeoutId);
-          if (isContextInvalidatedError(error)) {
-            resolve();
-            return;
-          }
-          reject(error);
-        }
-      } else {
-        resolve();
+  async function loadData() {
+    if (!storage) {
+      applyState({
+        prompts: [],
+        placeholderHistory: [],
+        buttonPosition: null,
+        autoSelectBracketPlaceholder: true,
+      });
+      return {
+        prompts: promptsData,
+        placeholderHistory,
+        buttonPosition: null,
+        autoSelectBracketPlaceholder: true,
+      };
+    }
+    try {
+      const state = await storage.load();
+      applyState(state);
+      return state;
+    } catch (error) {
+      applyState({
+        prompts: [],
+        placeholderHistory: [],
+        buttonPosition: null,
+        autoSelectBracketPlaceholder: true,
+      });
+      if (!isIgnorableStorageError(error)) {
+        console.error("[Prompt Helper] load failed:", error);
+        showStatus(UI_TEXT.loadFailed, "error");
       }
-    });
+      return {
+        prompts: promptsData,
+        placeholderHistory,
+        buttonPosition: null,
+        autoSelectBracketPlaceholder: true,
+      };
+    }
   }
 
-  function saveButtonPosition(pos) {
-    if (canUseChromeStorage()) {
-      try {
-        chrome.storage.local.set({ ph_button_pos: pos });
-      } catch (error) {
-        if (!isContextInvalidatedError(error)) {
-          console.error("[Prompt Helper] save button position failed:", error);
-        }
+  async function withWrite(operation) {
+    pendingWrites += 1;
+    try {
+      return await operation();
+    } finally {
+      pendingWrites -= 1;
+      if (pendingWrites === 0 && pendingExternalSync) {
+        pendingExternalSync = false;
+        await reloadFromStorage();
       }
     }
   }
 
-  // Module: Gemini editor bridge
-  function findGeminiEditor() {
-    return (
-      document.querySelector('[aria-label="Enter a prompt for Gemini"]') ||
-      document.querySelector('.ql-editor[contenteditable="true"]')
-    );
+  async function saveData() {
+    if (!storage) return;
+    await storage.savePrompts(promptsData, placeholderHistory);
   }
 
-  function getEditorPlainText(editor) {
-    let text = "";
-    const paragraphs = editor.querySelectorAll(":scope > p");
-    paragraphs.forEach((p, idx) => {
-      if (idx > 0) text += "\n";
-      const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
-      let node;
-      while ((node = walker.nextNode())) text += node.textContent;
-    });
-    return text;
+  async function saveButtonPosition(pos) {
+    if (!storage) return;
+    try {
+      await withWrite(() => storage.saveButtonPosition(pos));
+    } catch (error) {
+      if (!isIgnorableStorageError(error)) {
+        console.error("[Prompt Helper] save button position failed:", error);
+        showStatus(UI_TEXT.positionSaveFailed, "error");
+      }
+    }
+  }
+
+  async function reloadFromStorage() {
+    const state = await loadData();
+    renderList();
+    if (state.buttonPosition) {
+      const btn = document.getElementById(BTN_ID);
+      if (btn && typeof state.buttonPosition.left === "number" && typeof state.buttonPosition.top === "number") {
+        btn.style.left = `${state.buttonPosition.left}px`;
+        btn.style.top = `${state.buttonPosition.top}px`;
+        btn.style.right = "auto";
+        btn.style.bottom = "auto";
+        updatePanelPosition();
+        updateStatusPosition();
+      }
+    }
+    return state;
+  }
+
+  function subscribeToStorage() {
+    if (!storage || typeof storage.subscribe !== "function" || storageUnsubscribe) return;
+    try {
+      storageUnsubscribe = storage.subscribe(() => {
+        if (pendingWrites > 0) {
+          pendingExternalSync = true;
+          return;
+        }
+        void reloadFromStorage();
+      });
+    } catch (error) {
+      if (!isIgnorableStorageError(error)) {
+        showStatus(UI_TEXT.syncUnavailable, "error");
+      }
+    }
+  }
+
+  function findGeminiEditor() {
+    return typeof helper.findGeminiEditor === "function"
+      ? helper.findGeminiEditor(document)
+      : document.querySelector('[aria-label="Enter a prompt for Gemini"]') ||
+        document.querySelector('.ql-editor[contenteditable="true"]');
   }
 
   function getCursorOffset(editor) {
-    const sel = window.getSelection();
-    if (!sel.rangeCount) return 0;
-    const range = sel.getRangeAt(0);
-    if (!editor.contains(range.startContainer)) return 0;
-
-    let offset = 0;
-    const paragraphs = editor.querySelectorAll(":scope > p");
-    for (let i = 0; i < paragraphs.length; i++) {
-      const p = paragraphs[i];
-      if (i > 0) offset += 1;
-      const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
-      let node;
-      while ((node = walker.nextNode())) {
-        if (node === range.startContainer) return offset + range.startOffset;
-        offset += node.textContent.length;
-      }
-      if (p === range.startContainer) return offset;
-      if (!p.contains(range.startContainer) && (p.compareDocumentPosition(range.startContainer) & Node.DOCUMENT_POSITION_FOLLOWING) === 0) {
-        return Math.max(0, offset - (i > 0 ? 1 : 0));
-      }
+    if (typeof helper.getCursorOffset === "function") {
+      return helper.getCursorOffset(editor, window);
     }
-    return offset;
-  }
-
-  function rebuildEditor(editor, text) {
-    editor.innerHTML = "";
-    text.split("\n").forEach((line) => {
-      const p = document.createElement("p");
-      if (line) p.textContent = line;
-      else p.innerHTML = "<br>";
-      editor.appendChild(p);
-    });
-  }
-
-  function setCursorAtPosition(container, position) {
-    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-    let currentPos = 0;
-    let node;
-    while ((node = walker.nextNode())) {
-      const len = node.textContent.length;
-      if (currentPos + len >= position) {
-        const range = document.createRange();
-        range.setStart(node, Math.max(0, position - currentPos));
-        range.collapse(true);
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
-        return true;
-      }
-      currentPos += len;
-    }
-    return false;
-  }
-
-  function countNewlinesBefore(text, position) {
-    let count = 0;
-    for (let i = 0; i < position && i < text.length; i++) if (text[i] === "\n") count++;
-    return count;
+    return 0;
   }
 
   function trackEditorCursor() {
     const editor = findGeminiEditor();
     if (!editor) return;
     const sel = window.getSelection();
-    if (sel.rangeCount > 0 && editor.contains(sel.anchorNode)) lastEditorCursorOffset = getCursorOffset(editor);
+    if (sel.rangeCount > 0 && editor.contains(sel.anchorNode)) {
+      lastEditorCursorOffset = getCursorOffset(editor);
+    }
   }
 
-  // Module: Context menu
   function closeContextMenu() {
     if (activeContextMenu) {
       activeContextMenu.remove();
@@ -343,13 +316,14 @@
       const previousHistory = placeholderHistory.slice();
       placeholderHistory = placeholderHistory.filter((p) => p !== ph);
       try {
-        await saveData();
+        await withWrite(() => saveData());
         tag.remove();
         if (historyContainer.children.length === 0) historyContainer.style.display = "none";
         closeContextMenu();
       } catch (error) {
         placeholderHistory = previousHistory;
         console.error("[Prompt Helper] delete placeholder history failed:", error);
+        showStatus(UI_TEXT.historyDeleteFailed, "error");
         closeContextMenu();
       }
     });
@@ -370,7 +344,64 @@
     menu.style.top = `${Math.min(y, window.innerHeight - rect.height - 8)}px`;
   }
 
-  // Module: Panel shell
+  function createStatusNode() {
+    if (document.getElementById(STATUS_ID)) return;
+    const status = document.createElement("div");
+    status.id = STATUS_ID;
+    status.className = "ph-status";
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    status.hidden = true;
+    document.body.appendChild(status);
+  }
+
+  function updateStatusPosition() {
+    const status = document.getElementById(STATUS_ID);
+    const btn = document.getElementById(BTN_ID);
+    if (!status || status.hidden || !btn) return;
+
+    const margin = 12;
+    const gap = 10;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const btnRect = btn.getBoundingClientRect();
+    const statusRect = status.getBoundingClientRect();
+    const width = statusRect.width || Math.min(320, viewportWidth - margin * 2);
+    const height = statusRect.height || 44;
+    const maximumLeft = Math.max(margin, viewportWidth - width - margin);
+    const maximumTop = Math.max(margin, viewportHeight - height - margin);
+    const preferredTop = btnRect.top - height - gap;
+    const fallbackTop = btnRect.bottom + gap;
+    const left = Math.min(Math.max(btnRect.right - width, margin), maximumLeft);
+    const top = Math.min(
+      Math.max(preferredTop >= margin ? preferredTop : fallbackTop, margin),
+      maximumTop
+    );
+    status.style.left = `${left}px`;
+    status.style.top = `${top}px`;
+    status.style.right = "auto";
+    status.style.bottom = "auto";
+  }
+
+  function showStatus(message, kind = "info") {
+    createStatusNode();
+    const status = document.getElementById(STATUS_ID);
+    if (!status) return;
+    status.textContent = String(message || "");
+    status.setAttribute("data-ph-kind", kind === "error" ? "error" : "info");
+    status.hidden = !message;
+    updateStatusPosition();
+    if (statusHideTimer) {
+      window.clearTimeout(statusHideTimer);
+      statusHideTimer = null;
+    }
+    if (message) {
+      statusHideTimer = window.setTimeout(() => {
+        status.hidden = true;
+      }, 4000);
+    }
+  }
+
   function createFloatingButton(savedPos) {
     if (document.getElementById(BTN_ID)) return;
     const btn = document.createElement("button");
@@ -414,6 +445,7 @@
       btn.style.right = "auto";
       btn.style.bottom = "auto";
       updatePanelPosition();
+      updateStatusPosition();
     });
 
     window.addEventListener("mouseup", () => {
@@ -436,6 +468,7 @@
     });
 
     document.body.appendChild(btn);
+    createStatusNode();
   }
 
   function createPanel() {
@@ -448,7 +481,21 @@
 
     const header = document.createElement("div");
     header.className = "ph-panel-header";
-    header.textContent = UI_TEXT.toolName;
+    const title = document.createElement("span");
+    title.className = "ph-panel-title";
+    title.textContent = UI_TEXT.toolName;
+    const settingsBtn = document.createElement("button");
+    settingsBtn.type = "button";
+    settingsBtn.className = "ph-settings-btn";
+    settingsBtn.textContent = UI_TEXT.insertSettings;
+    settingsBtn.setAttribute("aria-label", UI_TEXT.insertSettings);
+    settingsBtn.title = UI_TEXT.insertSettings;
+    settingsBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openSettingsModal();
+    });
+    header.appendChild(title);
+    header.appendChild(settingsBtn);
 
     const list = document.createElement("div");
     list.id = "ph-panel-list";
@@ -526,7 +573,6 @@
     if (panel) panel.classList.remove("ph-panel-open");
   }
 
-  // Module: Prompt list and CRUD UI
   function escapeRegExp(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
@@ -574,6 +620,7 @@
       editBtn.textContent = UI_TEXT.editPrompt;
       editBtn.addEventListener("click", (e) => {
         e.stopPropagation();
+        e.preventDefault();
         openModal(item);
       });
 
@@ -584,6 +631,7 @@
       deleteBtn.textContent = UI_TEXT.delete;
       deleteBtn.addEventListener("click", (e) => {
         e.stopPropagation();
+        e.preventDefault();
         openConfirm(item);
       });
 
@@ -591,7 +639,10 @@
       actions.appendChild(deleteBtn);
       entry.appendChild(content);
       entry.appendChild(actions);
-      entry.addEventListener("click", () => insertPrompt(item));
+      entry.addEventListener("click", (e) => {
+        if (e.target.closest(".ph-entry-actions")) return;
+        insertPrompt(item);
+      });
       entry.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
@@ -602,11 +653,149 @@
     });
   }
 
-  function updatePlaceholderHistory(placeholder) {
+  function rememberPlaceholder(placeholder) {
+    if (typeof helper.updatePlaceholderHistory === "function") {
+      placeholderHistory = helper.updatePlaceholderHistory(placeholderHistory, placeholder);
+      return;
+    }
     if (!placeholder || placeholder === DEFAULT_PLACEHOLDER) return;
     placeholderHistory = placeholderHistory.filter((p) => p !== placeholder);
     placeholderHistory.unshift(placeholder);
-    if (placeholderHistory.length > MAX_PLACEHOLDER_HISTORY) placeholderHistory.pop();
+    if (placeholderHistory.length > 5) placeholderHistory.pop();
+  }
+
+  function openSettingsModal() {
+    cleanupOverlayGroup(`#${SETTINGS_ID}, .ph-settings-overlay`);
+    cleanupOverlayGroup(`#${MODAL_ID}, .ph-modal-overlay`);
+    cleanupOverlayGroup(`#${CONFIRM_ID}, .ph-confirm-overlay`);
+    lastActiveTrigger = document.activeElement;
+
+    const overlay = document.createElement("div");
+    overlay.id = SETTINGS_ID;
+    overlay.className = "ph-modal-overlay ph-settings-overlay";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", UI_TEXT.insertSettings);
+
+    const box = document.createElement("div");
+    box.className = "ph-modal-box";
+
+    const header = document.createElement("div");
+    header.className = "ph-modal-header";
+    header.textContent = UI_TEXT.insertSettings;
+
+    const body = document.createElement("div");
+    body.className = "ph-modal-body";
+
+    const setting = document.createElement("label");
+    setting.className = "ph-switch-setting";
+    setting.setAttribute("for", "ph-auto-select-bracket-placeholder");
+
+    const copy = document.createElement("span");
+    copy.className = "ph-setting-copy";
+    const settingTitle = document.createElement("span");
+    settingTitle.className = "ph-setting-title";
+    settingTitle.textContent = UI_TEXT.autoSelectLabel;
+    const settingDescription = document.createElement("span");
+    settingDescription.className = "ph-setting-description";
+    settingDescription.textContent = UI_TEXT.autoSelectHint;
+    copy.appendChild(settingTitle);
+    copy.appendChild(settingDescription);
+
+    const checkbox = document.createElement("input");
+    checkbox.id = "ph-auto-select-bracket-placeholder";
+    checkbox.className = "ph-switch-input";
+    checkbox.type = "checkbox";
+    checkbox.setAttribute("role", "switch");
+    checkbox.checked = autoSelectBracketPlaceholder !== false;
+
+    setting.appendChild(copy);
+    setting.appendChild(checkbox);
+
+    const priorityNote = document.createElement("p");
+    priorityNote.className = "ph-setting-note";
+    priorityNote.textContent = UI_TEXT.priorityNote;
+
+    const errorMsg = document.createElement("div");
+    errorMsg.className = "ph-form-hint";
+    errorMsg.style.color = "#dc2626";
+    errorMsg.style.display = "none";
+    errorMsg.textContent = UI_TEXT.settingsSaveFailed;
+
+    body.appendChild(setting);
+    body.appendChild(priorityNote);
+    body.appendChild(errorMsg);
+
+    const footer = document.createElement("div");
+    footer.className = "ph-modal-footer";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "ph-btn ph-btn-secondary";
+    cancelBtn.type = "button";
+    cancelBtn.textContent = UI_TEXT.cancel;
+    cancelBtn.addEventListener("click", closeSettingsModal);
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "ph-btn ph-btn-primary";
+    saveBtn.type = "button";
+    saveBtn.textContent = UI_TEXT.save;
+    let isSaving = false;
+    saveBtn.addEventListener("click", async () => {
+      if (isSaving) return;
+      if (!storage || typeof storage.saveAutoSelectBracketPlaceholder !== "function") {
+        showStatus(UI_TEXT.settingsUnavailable, "error");
+        errorMsg.textContent = UI_TEXT.settingsUnavailable;
+        errorMsg.style.display = "";
+        return;
+      }
+      const previous = autoSelectBracketPlaceholder;
+      const nextValue = checkbox.checked;
+      isSaving = true;
+      saveBtn.disabled = true;
+      cancelBtn.disabled = true;
+      errorMsg.style.display = "none";
+      try {
+        await withWrite(() => storage.saveAutoSelectBracketPlaceholder(nextValue));
+        autoSelectBracketPlaceholder = nextValue;
+        closeSettingsModal();
+      } catch (error) {
+        autoSelectBracketPlaceholder = previous;
+        checkbox.checked = previous;
+        console.error("[Prompt Helper] save insert settings failed:", error);
+        errorMsg.style.display = "";
+        showStatus(UI_TEXT.settingsSaveFailed, "error");
+        saveBtn.disabled = false;
+        cancelBtn.disabled = false;
+        isSaving = false;
+      }
+    });
+    footer.appendChild(cancelBtn);
+    footer.appendChild(saveBtn);
+
+    box.appendChild(header);
+    box.appendChild(body);
+    box.appendChild(footer);
+    overlay.appendChild(box);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) closeSettingsModal(); });
+    overlay.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        closeSettingsModal();
+        return;
+      }
+      trapFocus(box, e);
+    });
+    document.body.appendChild(overlay);
+    currentSettingsOverlay = overlay;
+    requestAnimationFrame(() => {
+      overlay.classList.add("ph-modal-open");
+      checkbox.focus();
+    });
+  }
+
+  function closeSettingsModal() {
+    const overlay =
+      currentSettingsOverlay ||
+      document.querySelector(".ph-settings-overlay.ph-modal-open") ||
+      document.getElementById(SETTINGS_ID);
+    closeOverlay(overlay, "ph-modal-open", lastActiveTrigger);
   }
 
   function openModal(item = null) {
@@ -694,7 +883,7 @@
     errorMsg.className = "ph-form-hint";
     errorMsg.style.color = "#dc2626";
     errorMsg.style.display = "none";
-    errorMsg.textContent = "保存失败，请重试。";
+    errorMsg.textContent = UI_TEXT.saveFailed;
     body.appendChild(errorMsg);
 
     const footer = document.createElement("div");
@@ -735,8 +924,8 @@
         } else {
           promptsData.push({ id: generateId(), name, prompt, placeholder });
         }
-        updatePlaceholderHistory(placeholder);
-        await saveData();
+        rememberPlaceholder(placeholder);
+        await withWrite(() => saveData());
         renderList();
         closeModal();
       } catch (error) {
@@ -744,6 +933,7 @@
         placeholderHistory = previousHistory;
         console.error("[Prompt Helper] save prompt failed:", error);
         errorMsg.style.display = "";
+        showStatus(UI_TEXT.saveFailed, "error");
         confirmBtn.disabled = false;
         cancelBtn.disabled = false;
         confirmBtn.textContent = originalText;
@@ -819,13 +1009,14 @@
 
       try {
         promptsData = promptsData.filter((p) => p.id !== item.id);
-        await saveData();
+        await withWrite(() => saveData());
         renderList();
         closeConfirm();
       } catch (error) {
         promptsData = previousPrompts;
         console.error("[Prompt Helper] delete prompt failed:", error);
-        msg.textContent = "删除失败，请重试。";
+        msg.textContent = UI_TEXT.deleteFailed;
+        showStatus(UI_TEXT.deleteFailed, "error");
         deleteBtn.disabled = false;
         cancelBtn.disabled = false;
         deleteBtn.textContent = originalText;
@@ -859,59 +1050,39 @@
     closeOverlay(overlay, "ph-confirm-open", lastActiveTrigger);
   }
 
-  // Module: Prompt insertion
   function insertPrompt(item) {
     const editor = findGeminiEditor();
     if (!editor) {
-      warn(UI_TEXT.noEditor);
+      showStatus(UI_TEXT.noEditor, "error");
       return;
     }
 
-    const promptText = item.prompt || "";
-    let placeholder = item.placeholder || DEFAULT_PLACEHOLDER;
-    let placeholderIndex = promptText.indexOf(placeholder);
-    let cleanText = promptText;
-
-    if (placeholderIndex !== -1) {
-      cleanText = promptText.replace(placeholder, "");
-    } else if (placeholder === DEFAULT_PLACEHOLDER) {
-      placeholderIndex = promptText.indexOf(LEGACY_PLACEHOLDER);
-      if (placeholderIndex !== -1) cleanText = promptText.replace(LEGACY_PLACEHOLDER, "");
+    if (typeof helper.prepareInsertion !== "function" || typeof helper.insertPreparedText !== "function") {
+      showStatus(UI_TEXT.noEditor, "error");
+      return;
     }
 
-    if (placeholderIndex === -1) {
-      for (const ph of [DEFAULT_PLACEHOLDER, LEGACY_PLACEHOLDER, ...placeholderHistory]) {
-        if (promptText.includes(ph)) {
-          placeholderIndex = promptText.indexOf(ph);
-          cleanText = promptText.replace(ph, "");
-          break;
-        }
-      }
+    const prepared = helper.prepareInsertion(item, placeholderHistory, {
+      autoSelectBracketPlaceholder,
+    });
+    const result = helper.insertPreparedText(editor, prepared, lastEditorCursorOffset, {
+      window,
+    });
+    if (!result || result.ok !== true) {
+      showStatus(UI_TEXT.noEditor, "error");
+      return;
     }
-
+    lastEditorCursorOffset = result.caretOffset;
     editor.focus();
-    const currentText = getEditorPlainText(editor);
-    const cursorOffset = lastEditorCursorOffset;
-    const newText = currentText.slice(0, cursorOffset) + cleanText + currentText.slice(cursorOffset);
-    rebuildEditor(editor, newText);
-    editor.dispatchEvent(new InputEvent("input", { bubbles: true }));
-    editor.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
-
-    let finalCursorPos = cursorOffset + (placeholderIndex !== -1 ? placeholderIndex : cleanText.length);
-    finalCursorPos -= countNewlinesBefore(currentText, cursorOffset);
-    finalCursorPos -= countNewlinesBefore(cleanText, placeholderIndex !== -1 ? placeholderIndex : cleanText.length);
-    setCursorAtPosition(editor, finalCursorPos);
-    lastEditorCursorOffset = cursorOffset + (placeholderIndex !== -1 ? placeholderIndex : cleanText.length);
-    editor.focus();
-    log("inserted prompt", item.name, { finalCursorPos, lastEditorCursorOffset, placeholder });
+    log("inserted prompt", item.name, result);
   }
 
-  // Module: App bootstrap
   async function init() {
     const data = await loadData();
     createPanel();
-    createFloatingButton(data.buttonPos);
+    createFloatingButton(data.buttonPosition || data.buttonPos || null);
     renderList();
+    subscribeToStorage();
 
     document.addEventListener("click", (e) => {
       const panel = document.getElementById(PANEL_ID);
@@ -925,6 +1096,11 @@
         closeContextMenu();
         closePanel();
       }
+    });
+
+    window.addEventListener("resize", () => {
+      updatePanelPosition();
+      updateStatusPosition();
     });
 
     document.addEventListener("selectionchange", trackEditorCursor);
