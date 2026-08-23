@@ -29,6 +29,63 @@ test("manifest still targets Gemini, not ChatGPT", () => {
   assert.equal(scripts.includes("chatgpt-editor.js"), false);
 });
 
+test("manifest registers update-check with the GitHub API host permission", () => {
+  const manifest = JSON.parse(read("manifest.json"));
+  assert.match(JSON.stringify(manifest.host_permissions || []), /api\.github\.com/u);
+  const scripts = manifest.content_scripts.flatMap((entry) => entry.js || []);
+  const contentIndex = scripts.indexOf("content.js");
+  const updateIndex = scripts.indexOf("update-check.js");
+  assert.ok(updateIndex >= 0, "update-check.js must be a content script");
+  assert.ok(contentIndex > updateIndex, "update-check.js must load before content.js");
+});
+
+test("prompt list supports drag and keyboard reordering", () => {
+  const content = read("content.js");
+  assert.match(content, /ph-entry-drag/u);
+  assert.match(content, /commitPromptOrder/u);
+  assert.match(content, /moveIds/u);
+  assert.match(content, /ArrowUp/u);
+  assert.match(content, /ArrowDown/u);
+  assert.match(content, /reorderFailed|调整顺序失败/u);
+  assert.match(content, /if\s*\(\s*listDrag\s*\)\s*return/u);
+  assert.match(content, /bindListDragWindowListeners/u);
+
+  const css = read("content.css");
+  assert.match(css, /\.ph-entry-drag/u);
+  assert.match(css, /ph-dragging-card/u);
+  assert.match(css, /\.ph-list-reordering/u);
+});
+
+test("SPA remount restores in-memory panel state and does not leak window listeners", () => {
+  const content = read("content.js");
+  assert.match(content, /let panelIsOpen/u);
+  assert.match(content, /panelIsOpen = panel\.classList\.toggle/u);
+  assert.match(content, /clearListDrag\(false\)/u);
+  assert.match(content, /dismissSessionOverlays/u);
+  assert.match(content, /bindButtonWindowListeners/u);
+  assert.match(content, /buttonWindowListenersBound/u);
+  assert.match(content, /clampButtonToViewport\(\)/u);
+  assert.match(content, /window\.addEventListener\(\s*["']mousemove["'],\s*handleButtonMouseMove/u);
+});
+
+test("dark theme component colors come from CSS variables, not copied selector forks", () => {
+  const css = read("content.css");
+  assert.match(css, /html\.dark/u);
+  assert.match(css, /--ph-add-bg/u);
+  assert.doesNotMatch(css, /html\.dark \.ph-settings-btn/u);
+  assert.doesNotMatch(
+    css,
+    /html:not\(\.light\):not\(\[data-theme=["']light["']\]\) \.ph-settings-btn/u
+  );
+});
+
+test("settings dialog exposes an update check backed by PromptHelper.checkForUpdate", () => {
+  const content = read("content.js");
+  assert.match(content, /checkForUpdate/u);
+  assert.match(content, /runUpdateCheck/u);
+  assert.match(content, /检查更新/u);
+});
+
 test("panel markup includes 插入设置 bound to the auto-select flag", () => {
   const content = read("content.js");
   assert.match(content, /插入设置/u);

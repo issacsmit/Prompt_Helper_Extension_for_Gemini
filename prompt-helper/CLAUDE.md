@@ -18,27 +18,38 @@ Prompt Helper 是一个 Chrome 扩展（Manifest V3），用于在 Gemini 网页
 
 ### 2.2 面板与交互
 - 悬浮按钮打开/关闭面板。
-- 悬浮按钮支持拖拽并持久化位置。
+- 悬浮按钮支持拖拽并持久化位置；加载、SPA 重挂与窗口缩放后位置夹取回可视范围。
 - 面板根据按钮位置动态计算显示方位。
 
-### 2.3 注入与光标
+### 2.3 提示词排序
+- 每条词条左侧有六点拖动手柄（SVG，`currentColor`）。
+- 细指针可从手柄或词条正文发起拖动；触屏只允许从手柄拖动（手柄 `touch-action: none`）。
+- 拖动超过 6px 阈值进入排序态：被拖卡片 `translate3d` 跟手，其余卡片按步距整体位移；列表边缘自动滚动；松手后有回弹动画（尊重 reduced-motion）。
+- 从正文发起的拖动会抑制随后的插入点击；从手柄发起不会。
+- 焦点在手柄上时 ↑/↓ 方向键移动顺序，焦点跟随。
+- 排序走乐观更新：先改内存与 DOM，`savePrompts` 失败则回滚顺序并提示「调整顺序失败」。写入进行中不允许再次排序。
+
+### 2.4 注入与光标
 - 定位 Gemini 输入区（`aria-label` 优先，`.ql-editor[contenteditable="true"]` 回退）。
 - 注入后触发 `input` + `keyup`，确保 Gemini 感知内容变化；不自动发送。
 - 占位符优先级：当前自定义光标 → `【光标】`/`[光标]` → 第一处 `【…】`（可关） → 历史兼容占位符。未实际出现的自定义光标不会阻断后续规则。
 - 光标标记被移除后折叠光标；通用 `【主题】` 留在正文中并以选区覆盖整段。
 - 光标定位基于 DOM 遍历与偏移计算，支持多段落场景。
 
-### 2.4 UI/可用性
+### 2.5 UI/可用性
 - 统一视觉系统（浅色/深色模式）。
+- 主题判定：`html.dark` / `html[data-theme="dark"]` 显式暗色 → 系统偏好回退（`html:not(.light):not([data-theme="light"])` 内的 media query）；宿主显式声明浅色时不会被系统暗色覆盖。
 - 删除态视觉已弱化（可识别但不刺眼）。
 - 支持 `prefers-reduced-motion`（减少动画）。
-- 弹窗与确认框支持 `Esc` 关闭、Tab 焦点循环、关闭后焦点返回。
+- 弹窗与确认框支持 `Esc` 关闭、Tab 焦点循环、关闭后焦点返回；弹窗打开时 Esc 不再连带关闭面板。
 - 触屏 / 粗指针下卡片编辑和删除始终可见。
 
-### 2.5 插入设置、状态与跨标签
+### 2.6 插入设置、状态与跨标签
 - 面板标题栏 **插入设置** 控制 `ph_auto_select_bracket_placeholder`（缺省为开）。
+- 插入设置内含「检查更新」区块：仅在点击按钮时通过 `update-check.js` 查询 GitHub latest Release（5s 超时，失败静默降级为「暂时无法检查更新」+ 发布页链接）；版本比较按点分数字逐段比较。
 - 找不到 Gemini 输入框、保存/设置失败时，在浮动按钮旁显示可见状态。
 - `chrome.storage.onChanged` 同步列表、历史和自动选中开关；写入进行中会推迟外部同步。
+- SPA 单例恢复：`MutationObserver` 监听文档子树（rAF 去抖），Gemini 重建 DOM 后若浮动按钮/面板被移除会自动重挂载。打开状态记在内存里（不依赖已被卸下的节点）；重挂前清 `listDrag`、overlay 和浮钮拖拽态。`window` 级浮钮监听只绑一次。回调先检查 `chrome.runtime.id`，扩展失效时静默退出。
 - 粗指针下卡片编辑/删除始终可见，激活它们不会插入提示词。
 
 ---
@@ -60,6 +71,8 @@ Prompt Helper 是一个 Chrome 扩展（Manifest V3），用于在 Gemini 网页
    - `ph_auto_select_bracket_placeholder`（可新增；缺省视为开启）
 4. 注入后必须触发 `input` 与 `keyup`。
 5. 占位符匹配必须走 `prompt-engine.js` 的 shipped `prepareInsertion`，插入必须走 `gemini-editor.js` 的 `insertPreparedText`。
+6. content script 加载顺序固定：constants → prompt-engine → storage → gemini-editor → update-check → content；新增运行模块须同步更新 manifest、static-guard 测试。
+7. 平时不联网；唯一允许的网络请求是用户点击「检查更新」时对 `https://api.github.com/repos/issacsmit/Prompt_Helper_Extension/releases/latest` 的只读查询。
 
 ---
 
@@ -95,7 +108,8 @@ prompt-helper/
 ├── prompt-engine.js     # prepareInsertion / updatePlaceholderHistory
 ├── storage.js           # 持久化与 onChanged
 ├── gemini-editor.js     # 重建输入框、选区、input/keyup
-├── content.js           # 面板/弹窗/插入设置/状态
+├── update-check.js      # 手动检查 GitHub Release（isNewerVersion / checkForUpdate）
+├── content.js           # 面板/弹窗/插入设置/拖动排序/SPA 恢复/状态
 ├── content.css          # 视觉系统与组件样式（含 dark/reduced-motion/coarse pointer）
 ├── tests/               # node:test，直接 require shipped 模块
 ├── TEST_CHECKLIST.md    # 回归验收清单

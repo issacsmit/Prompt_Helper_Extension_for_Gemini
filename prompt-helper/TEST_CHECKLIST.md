@@ -18,6 +18,15 @@ Automated suite (does **not** replace live Gemini checks): from `prompt-helper/`
 - [ ] Delete prompt path works: open confirm -> cancel does nothing -> delete removes item.
 - [ ] Save failure shows a visible status near the floating button (not only console) and the form stays usable.
 
+## 2b) Prompt Reordering
+- [ ] With 2+ prompts, dragging the left six-dot handle moves a card; other cards shift aside while dragging.
+- [ ] Dropping persists the new order: refresh the page and the order stays.
+- [ ] Fine pointer: dragging from the card body also reorders, and the following click does **not** insert.
+- [ ] Touch/coarse: dragging works only from the handle; body drag scrolls the list instead.
+- [ ] Keyboard: focus the handle, ArrowUp/ArrowDown move the item and focus follows it.
+- [ ] Simulated write failure (e.g. DevTools storage block) rolls the visible order back and shows 调整顺序失败.
+- [ ] With fewer than 2 prompts, drag handles do not start a reorder.
+
 ## 3) Placeholder + Cursor
 - [ ] Default placeholder (`【光标】`) is removed on insert and cursor lands at marker position (first match only; later copies stay).
 - [ ] Legacy placeholder (`[光标]`) still works when the default marker is absent.
@@ -33,6 +42,13 @@ Automated suite (does **not** replace live Gemini checks): from `prompt-helper/`
 - [ ] With auto-select off, placeholder history still matches and removes the history marker.
 - [ ] The flag persists in `chrome.storage.local` as `ph_auto_select_bracket_placeholder`; another Gemini tab of this extension updates without reload.
 
+## 4b) Update Check (插入设置)
+- [ ] 插入设置 shows a 检查更新 section with the current version.
+- [ ] Clicking 检查更新 queries GitHub only at that moment; result text appears (new version link / up to date / unavailable).
+- [ ] When offline, the status falls back to 暂时无法检查更新 with a GitHub releases link; no unhandled errors.
+- [ ] If GitHub has no public Release yet, the same unavailable fallback is expected; publish `v1.1.0` (or later) on `issacsmit/Prompt_Helper_Extension` before treating this as a product regression.
+- [ ] The release link opens `github.com/issacsmit/Prompt_Helper_Extension/releases` in a new tab.
+
 ## 5) Insertion Behavior
 - [ ] Insert at current cursor position (not full overwrite).
 - [ ] Multi-line content keeps expected line structure.
@@ -43,8 +59,12 @@ Automated suite (does **not** replace live Gemini checks): from `prompt-helper/`
 ## 6) Floating Button + Panel Position + Status
 - [ ] Drag button to a new location and refresh page.
 - [ ] Button position restores correctly.
+- [ ] Shrink the window: the button is clamped back into the viewport (12px margin) instead of getting stuck off-screen.
+- [ ] A saved off-screen position (or a smaller window on load) is clamped on first paint, not only after resize.
+- [ ] Open the panel, then trigger Gemini SPA navigation: the floating button and open panel remount; drag/reorder is not stuck and overlays do not block Esc.
 - [ ] Panel appears near button and remains in viewport.
 - [ ] Status toast is anchored to the floating button (prefer above, fallback below, clamped in viewport) and follows drag/resize.
+- [ ] SPA navigation inside Gemini (e.g. switching conversations) does not lose the floating button or panel.
 
 ## 7) Keyboard and Accessibility
 - [ ] Escape closes panel.
