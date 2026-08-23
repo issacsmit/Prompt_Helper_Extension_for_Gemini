@@ -94,7 +94,6 @@ prompt-helper/
 ├── content.css          # 视觉系统与组件样式
 ├── tests/               # node:test 自动化（驱动 shipped 函数）
 ├── icons/               # 扩展图标（16 / 48 / 128）
-├── CLAUDE.md            # 开发者文档
 └── TEST_CHECKLIST.md    # 回归测试清单
 ```
 
