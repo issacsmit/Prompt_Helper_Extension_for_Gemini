@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">Gemini 提示词工具</title>
+  <defs>
+    <linearGradient id="surface" x1="34" y1="24" x2="96" y2="108" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5d7cff"/>
+      <stop offset="0.52" stop-color="#4165e6"/>
+      <stop offset="1" stop-color="#2449c8"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="7" stdDeviation="6" flood-color="#1d3fa8" flood-opacity="0.24"/>
+    </filter>
+  </defs>
+  <circle cx="64" cy="60" r="48" fill="url(#surface)" stroke="#ffffff" stroke-opacity="0.3" stroke-width="2" filter="url(#shadow)"/>
+  <path d="M64 35c3.7 13.5 11.5 21.3 25 25-13.5 3.7-21.3 11.5-25 25-3.7-13.5-11.5-21.3-25-25 13.5-3.7 21.3-11.5 25-25Z" fill="#ffffff"/>
+</svg>

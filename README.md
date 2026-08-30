@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/images/prompt-helper-launcher.png" width="96" alt="提示词工具浮动按钮">
+  <img src="docs/images/prompt-helper-logo.svg" width="104" alt="Gemini 提示词工具图标">
   <h1>提示词工具 (Prompt Helper)</h1>
   <p>在 Gemini 网页版快速插入预设提示词，并把光标或选区放到需要填写的位置。</p>
   <p><strong>本地存储 · 零运行依赖 · 平时不联网 · 不自动发送</strong></p>
