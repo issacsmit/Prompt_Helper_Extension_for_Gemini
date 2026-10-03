@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">Gemini 提示词助手</title>
+  <defs>
+    <linearGradient id="surface" x1="27" y1="11" x2="101" y2="117" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#1d4ed8"/>
+    </linearGradient>
+  </defs>
+  <circle cx="64" cy="64" r="62" fill="url(#surface)" stroke="#ffffff" stroke-opacity="0.35" stroke-width="2.5"/>
+  <path d="M62.7 46.8a1.44 1.44 0 0 1 2.6 0l3.4 7.1a12.8 12.8 0 0 0 6.1 6.1l7.1 3.4a1.44 1.44 0 0 1 0 2.6L74.8 69.4a12.8 12.8 0 0 0-6.1 6.1l-3.4 7.1a1.44 1.44 0 0 1-2.6 0l-3.4-7.1a12.8 12.8 0 0 0-6.1-6.1l-7.1-3.4a1.44 1.44 0 0 1 0-2.6l7.1-3.4a12.8 12.8 0 0 0 6.1-6.1Z" fill="#ffffff" transform="translate(0 -0.7)"/>
+</svg>

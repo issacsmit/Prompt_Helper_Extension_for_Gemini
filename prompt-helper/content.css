@@ -360,6 +360,11 @@ html[data-theme="dark"] {
   text-decoration: none;
 }
 
+/* Keep hidden update controls out of layout, including the flex-styled link. */
+.ph-update-check > [hidden] {
+  display: none !important;
+}
+
 .ph-panel-list {
   flex: 1;
   overflow-y: auto;
